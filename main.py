@@ -8,17 +8,27 @@ from typing import Any, Dict, List
 import pandas as pd
 import yaml
 
-# Yol B extractorlar
+# Extractors
 from src.fbref_extractor import (
     extract_fbref_team_season_stats,
     extract_fbref_player_season_stats,
 )
 from src.understat_extractor import extract_understat_player_season_stats
+
+# Normalize helper
 from src.normalize_utils import standardize_name
+
+# Transformers → DB Tables
+from src.transform import (
+    build_teams_from_fbref,
+    build_team_season_from_fbref,
+    build_players_from_fbref,
+    build_player_season_stats,
+)
 
 
 # ----------------------------
-# Config models
+# CONFIG MODEL
 # ----------------------------
 @dataclass
 class LeagueConfig:
@@ -35,14 +45,13 @@ def load_leagues_config(path: str) -> List[LeagueConfig]:
     with open(path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
 
-    leagues_raw = cfg.get("leagues", [])
-    leagues: List[LeagueConfig] = []
-    for item in leagues_raw:
+    leagues = []
+    for item in cfg.get("leagues", []):
         leagues.append(
             LeagueConfig(
                 country_code=item["country_code"],
                 country_name=item["country_name"],
-                level=int(item.get("level", item.get("tier", 1))),
+                level=int(item.get("level", 1)),
                 league_name=item["league_name"],
                 season_format=item.get("season_format", "YYYY-YYYY"),
                 ids=item.get("ids", {}),
@@ -53,7 +62,7 @@ def load_leagues_config(path: str) -> List[LeagueConfig]:
 
 
 # ----------------------------
-# Normalized schema (your v1)
+# NORMALIZED EMPTY SCHEMA
 # ----------------------------
 def normalized_empty_tables_v1() -> Dict[str, pd.DataFrame]:
     return {
@@ -64,164 +73,143 @@ def normalized_empty_tables_v1() -> Dict[str, pd.DataFrame]:
         "team_season": pd.DataFrame(columns=["team_id", "season_id", "points", "rank"]),
         "player_season_stats": pd.DataFrame(columns=["player_id", "team_id", "season_id", "minutes", "goals", "xg", "assists"]),
         "matches": pd.DataFrame(columns=["id", "season_id", "home_team_id", "away_team_id", "date", "home_goals", "away_goals"]),
-        "source_entity_map": pd.DataFrame(
-            columns=[
-                "entity_type",
-                "source",
-                "source_id",
-                "canonical_id",
-                "source_name",
-                "season_id",
-                "confidence",
-                "match_method",
-                "fetched_at",
-            ]
-        ),
     }
 
 
-def ensure_dirs(*paths: str) -> None:
+# ----------------------------
+# HELPERS
+# ----------------------------
+def ensure_dirs(*paths):
     for p in paths:
         os.makedirs(p, exist_ok=True)
 
 
-def write_tables_as_csv(tables: Dict[str, pd.DataFrame], out_dir: str) -> None:
+def write_tables_as_csv(tables, out_dir):
     ensure_dirs(out_dir)
     for name, df in tables.items():
         df.to_csv(os.path.join(out_dir, f"{name}.csv"), index=False, encoding="utf-8-sig")
 
 
-def now_utc_iso() -> str:
+def now_utc_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
-def make_league_id(country_code: str, league_name: str, level: int) -> str:
-    safe = (
-        league_name.lower()
-        .replace("ı", "i").replace("ğ", "g").replace("ş", "s").replace("ö", "o").replace("ü", "u").replace("ç", "c")
-    )
-    safe = "".join(ch if (ch.isalnum() or ch == " ") else " " for ch in safe)
-    safe = "_".join(safe.split())
+def make_league_id(country_code, league_name, level):
+    safe = league_name.lower()
+    for tr, en in [("ı","i"),("ğ","g"),("ş","s"),("ö","o"),("ü","u"),("ç","c")]:
+        safe = safe.replace(tr,en)
+    safe = "".join(ch if ch.isalnum() else "_" for ch in safe)
     return f"{country_code}_{level}_{safe}"
 
 
-def make_season_id(league_id: str, season_year: int) -> str:
+def make_season_id(league_id, season_year):
     return f"{league_id}__{season_year}"
 
 
-def build_leagues_table(cfg_leagues: List[LeagueConfig]) -> pd.DataFrame:
+# ----------------------------
+# BUILD LEAGUE + SEASON TABLES
+# ----------------------------
+def build_leagues_table(cfg_leagues):
     rows = []
     for l in cfg_leagues:
-        rows.append(
-            {
-                "id": make_league_id(l.country_code, l.league_name, l.level),
-                "name": l.league_name,
-                "country": l.country_code,
-                "level": l.level,
-            }
-        )
+        rows.append({
+            "id": make_league_id(l.country_code, l.league_name, l.level),
+            "name": l.league_name,
+            "country": l.country_code,
+            "level": l.level,
+        })
     return pd.DataFrame(rows)
 
 
-def build_seasons_table(leagues_df: pd.DataFrame, season_years: List[int]) -> pd.DataFrame:
+def build_seasons_table(leagues_df, season_years):
     rows = []
     for _, row in leagues_df.iterrows():
-        league_id = row["id"]
         for y in season_years:
-            rows.append({"id": make_season_id(league_id, int(y)), "league_id": league_id, "season_year": int(y)})
+            rows.append({
+                "id": make_season_id(row["id"], y),
+                "league_id": row["id"],
+                "season_year": y
+            })
     return pd.DataFrame(rows)
 
 
-def build_source_entity_map_for_leagues(cfg_leagues: List[LeagueConfig], fetched_at: str) -> pd.DataFrame:
-    rows = []
-    for l in cfg_leagues:
-        canonical_league_id = make_league_id(l.country_code, l.league_name, l.level)
-        for source in ["fbref", "understat"]:
-            source_id = (l.ids or {}).get(source)
-            if source_id:
-                rows.append(
-                    {
-                        "entity_type": "league",
-                        "source": source,
-                        "source_id": str(source_id),
-                        "canonical_id": canonical_league_id,
-                        "source_name": l.league_name,
-                        "season_id": "",
-                        "confidence": 1.0,
-                        "match_method": "config",
-                        "fetched_at": fetched_at,
-                    }
-                )
-    return pd.DataFrame(rows)
-
-
+# ----------------------------
+# MAIN PIPELINE
+# ----------------------------
 def main():
-    project_root = os.path.dirname(os.path.abspath(__file__))
-    cfg_path = os.path.join(project_root, "config", "leagues.yaml")
-    out_dir = os.path.join(project_root, "data", "normalized")
+    root = os.path.dirname(os.path.abspath(__file__))
+    cfg_path = os.path.join(root, "config", "leagues.yaml")
+    out_dir = os.path.join(root, "data", "normalized")
 
     ensure_dirs(out_dir)
 
     # 1) Load config
-    cfg_leagues_all = load_leagues_config(cfg_path)
-    cfg_leagues = [l for l in cfg_leagues_all if l.active and l.level == 1]
-    print(f"[INFO] Active level=1 leagues in config: {len(cfg_leagues)}")
+    cfg_all = load_leagues_config(cfg_path)
+    cfg_leagues = [l for l in cfg_all if l.active and l.level == 1]
+    print(f"[INFO] Active top leagues: {len(cfg_leagues)}")
 
-    # 2) Seasons (ilk etap)
+    # 2) Seasons
     season_years = [2019, 2020, 2021, 2022, 2023]
-    print(f"[INFO] Season years: {season_years}")
+    print(f"[INFO] Seasons: {season_years}")
 
-    # 3) Init normalized schema (empty)
+    # 3) Init schema
     tables = normalized_empty_tables_v1()
 
-    # 4) Build catalog tables
+    # 4) Build league + season tables
     leagues_df = build_leagues_table(cfg_leagues)
     seasons_df = build_seasons_table(leagues_df, season_years)
     tables["leagues"] = leagues_df
     tables["seasons"] = seasons_df
 
-    # 5) Initial mapping for leagues
-    fetched_at = now_utc_iso()
-    tables["source_entity_map"] = build_source_entity_map_for_leagues(cfg_leagues, fetched_at)
-
-    # =====================================================
-    # ✅ EXTRACTOR BLOĞU (CSV yazmadan önce)
-    # =====================================================
-
+    # ----------------------------
+    # EXTRACT
+    # ----------------------------
     fbref_leagues = [l.ids["fbref"] for l in cfg_leagues if l.ids.get("fbref")]
     understat_leagues = [l.ids["understat"] for l in cfg_leagues if l.ids.get("understat")]
 
-    print("\n[STEP] FBref team season stats")
+    print("\n[STEP] FBref team stats")
     df_team_stats = extract_fbref_team_season_stats(fbref_leagues, season_years)
 
-    print("\n[STEP] FBref player season stats")
+    print("\n[STEP] FBref player stats")
     df_player_stats_fb = extract_fbref_player_season_stats(fbref_leagues, season_years)
 
-    print("\n[STEP] Understat player season stats (xG)")
+    print("\n[STEP] Understat player stats (xG)")
     df_player_stats_us = extract_understat_player_season_stats(understat_leagues, season_years)
 
-    # quick normalize "player_std" columns (inspection)
+    # Standardize names for xG merge
     if not df_player_stats_fb.empty:
-        name_col = "player" if "player" in df_player_stats_fb.columns else "player_name"
-        df_player_stats_fb["player_std"] = df_player_stats_fb[name_col].apply(standardize_name)
+        df_player_stats_fb["player_std"] = df_player_stats_fb["player"].apply(standardize_name)
 
-    if not df_player_stats_us.empty and "player" in df_player_stats_us.columns:
+    if not df_player_stats_us.empty:
         df_player_stats_us["player_std"] = df_player_stats_us["player"].apply(standardize_name)
 
-    # write raw extracts for debugging (these are extra files)
+    # Save raw debug CSVs
     df_team_stats.to_csv(os.path.join(out_dir, "fbref_team_season_raw.csv"), index=False, encoding="utf-8-sig")
     df_player_stats_fb.to_csv(os.path.join(out_dir, "fbref_player_season_raw.csv"), index=False, encoding="utf-8-sig")
     df_player_stats_us.to_csv(os.path.join(out_dir, "understat_player_season_raw.csv"), index=False, encoding="utf-8-sig")
-
     print("[OK] Raw extractor CSVs written.")
 
-    # =====================================================
-    # 6) Write normalized schema CSVs (keep this last)
-    # =====================================================
-    write_tables_as_csv(tables, out_dir)
+    # ----------------------------
+    # TRANSFORM → DB TABLES
+    # ----------------------------
+    teams_df = build_teams_from_fbref(df_team_stats)
+    players_df = build_players_from_fbref(df_player_stats_fb)
+    team_season_df = build_team_season_from_fbref(df_team_stats, teams_df, seasons_df, leagues_df)
+    player_season_df = build_player_season_stats(df_player_stats_fb, df_player_stats_us, players_df, teams_df)
 
-    print("[DONE] Normalized schema v1 created.")
-    print(f"       Output: {out_dir}")
+    tables["teams"] = teams_df
+    tables["players"] = players_df
+    tables["team_season"] = team_season_df
+    tables["player_season_stats"] = player_season_df
+
+    print(f"[OK] teams: {len(teams_df)} | players: {len(players_df)} | player_season_stats: {len(player_season_df)}")
+
+    # ----------------------------
+    # WRITE NORMALIZED CSVs
+    # ----------------------------
+    write_tables_as_csv(tables, out_dir)
+    print("[DONE] Normalized DB schema created!")
+    print(f"📁 Output folder: {out_dir}")
 
 
 if __name__ == "__main__":

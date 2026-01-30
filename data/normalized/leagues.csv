@@ -1,1 +1,6 @@
-﻿
+﻿id,name,country,level
+ENG_1_premier_league,Premier League,ENG,1
+ESP_1_la_liga,La Liga,ESP,1
+GER_1_bundesliga,Bundesliga,GER,1
+ITA_1_serie_a,Serie A,ITA,1
+FRA_1_ligue_1,Ligue 1,FRA,1

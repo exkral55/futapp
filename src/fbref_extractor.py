@@ -1,52 +1,48 @@
-from soccerdata import FBref
 import pandas as pd
+from soccerdata import FBref
+
+
+def _to_fbref_season(season_year):
+    # 2019 -> "2019-2020"
+    y = int(season_year)
+    return f"{y}-{y+1}"
+
+
+def _flatten_cols(df: pd.DataFrame) -> pd.DataFrame:
+    if isinstance(df.columns, pd.MultiIndex):
+        df = df.copy()
+        df.columns = [
+            "_".join([str(x) for x in tup if x and str(x) != "nan"]).strip("_")
+            for tup in df.columns.to_list()
+        ]
+    df.columns = [c.strip() for c in df.columns]
+    return df
 
 
 def extract_fbref_team_season_stats(leagues, seasons):
-    fb = FBref()
-    all_tables = []
+    # seasons -> ["2019-2020", "2020-2021", ...]
+    seasons_fb = [_to_fbref_season(s) for s in seasons]
 
-    for lg in leagues:
-        for season in seasons:
-            try:
-                df = fb.read_team_season_stats(
-                    league=lg,
-                    season=season
-                )
-                df["source"] = "fbref"
-                df["league_code"] = lg
-                df["season_year"] = season
-                all_tables.append(df)
-                print(f"[OK] FBref TEAM stats {lg} {season}")
-            except Exception as e:
-                print(f"[ERR] FBref TEAM stats {lg} {season} → {e}")
+    fb = FBref(leagues=leagues, seasons=seasons_fb)
+    df = fb.read_team_season_stats()
+    df = _flatten_cols(df)
 
-    if not all_tables:
+    if df is None or df.empty:
         return pd.DataFrame()
 
-    return pd.concat(all_tables, ignore_index=True)
+    df["source"] = "fbref"
+    return df.reset_index(drop=True)
 
 
 def extract_fbref_player_season_stats(leagues, seasons):
-    fb = FBref()
-    all_tables = []
+    seasons_fb = [_to_fbref_season(s) for s in seasons]
 
-    for lg in leagues:
-        for season in seasons:
-            try:
-                df = fb.read_player_season_stats(
-                    league=lg,
-                    season=season
-                )
-                df["source"] = "fbref"
-                df["league_code"] = lg
-                df["season_year"] = season
-                all_tables.append(df)
-                print(f"[OK] FBref PLAYER stats {lg} {season}")
-            except Exception as e:
-                print(f"[ERR] FBref PLAYER stats {lg} {season} → {e}")
+    fb = FBref(leagues=leagues, seasons=seasons_fb)
+    df = fb.read_player_season_stats()
+    df = _flatten_cols(df)
 
-    if not all_tables:
+    if df is None or df.empty:
         return pd.DataFrame()
 
-    return pd.concat(all_tables, ignore_index=True)
+    df["source"] = "fbref"
+    return df.reset_index(drop=True)

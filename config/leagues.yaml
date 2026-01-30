@@ -1,0 +1,78 @@
+leagues:
+  - country_code: ENG
+    country_name: England
+    level: 1
+    league_name: Premier League
+    active: true
+    ids:
+      fbref: "ENG-Premier League"
+      understat: "ENG-Premier League"
+
+  - country_code: ESP
+    country_name: Spain
+    level: 1
+    league_name: La Liga
+    active: true
+    ids:
+      fbref: "ESP-La Liga"
+      understat: "ESP-La Liga"
+
+  - country_code: GER
+    country_name: Germany
+    level: 1
+    league_name: Bundesliga
+    active: true
+    ids:
+      fbref: "GER-Bundesliga"
+      understat: "GER-Bundesliga"
+
+  - country_code: ITA
+    country_name: Italy
+    level: 1
+    league_name: Serie A
+    active: true
+    ids:
+      fbref: "ITA-Serie A"
+      understat: "ITA-Serie A"
+
+  - country_code: FRA
+    country_name: France
+    level: 1
+    league_name: Ligue 1
+    active: true
+    ids:
+      fbref: "FRA-Ligue 1"
+      understat: "FRA-Ligue 1"
+
+  # --- unsupported in your FBref league list right now ---
+  - country_code: TUR
+    country_name: Turkey
+    level: 1
+    league_name: Süper Lig
+    active: false
+    ids:
+      fbref: "TUR-Super Lig"
+
+  - country_code: POR
+    country_name: Portugal
+    level: 1
+    league_name: Primeira Liga
+    active: false
+    ids:
+      fbref: "POR-Primeira Liga"
+
+  - country_code: NED
+    country_name: Netherlands
+    level: 1
+    league_name: Eredivisie
+    active: false
+    ids:
+      fbref: "NED-Eredivisie"
+
+  - country_code: BEL
+    country_name: Belgium
+    level: 1
+    league_name: Jupiler Pro League
+    active: false
+    ids:
+      fbref: "BEL-First Division A"

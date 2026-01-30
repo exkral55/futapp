@@ -1,146 +1,155 @@
+# src/transform.py
 from __future__ import annotations
 
-import hashlib
 import re
-from typing import Optional
+import hashlib
+from typing import List, Optional
 
 import pandas as pd
 
 
 # ----------------------------
-# Small utils
+# Small helpers
 # ----------------------------
-def _slug(s: str) -> str:
-    s = (s or "").strip().lower()
-    # Turkish chars -> latin
-    for tr, en in [("ı", "i"), ("ğ", "g"), ("ş", "s"), ("ö", "o"), ("ü", "u"), ("ç", "c")]:
-        s = s.replace(tr, en)
-    s = re.sub(r"\s+", " ", s)
-    s = re.sub(r"[^a-z0-9 ]+", "", s)
-    s = s.strip().replace(" ", "_")
-    return s
-
-
-def _stable_id(prefix: str, key: str) -> str:
-    h = hashlib.md5((key or "").encode("utf-8")).hexdigest()[:12]
-    return f"{prefix}_{h}"
-
-
-def _pick_col(df: pd.DataFrame, candidates: list[str]) -> Optional[str]:
-    if df is None or df.empty:
-        return None
-    cols = list(df.columns)
-    lower_map = {str(c).lower(): c for c in cols}
-    for cand in candidates:
-        c = lower_map.get(cand.lower())
-        if c is not None:
-            return c
-    return None
-
-
-def _as_int_series(s: pd.Series) -> pd.Series:
-    return pd.to_numeric(s, errors="coerce").fillna(0).astype(int)
-
-
-def _as_float_series(s: pd.Series) -> pd.Series:
-    return pd.to_numeric(s, errors="coerce").fillna(0.0).astype(float)
-
-
 def _dedup_cols(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop duplicate column labels like 'season' and 'season.1' issues."""
+    """Remove duplicate columns created by pandas (.1 etc.) keeping the first occurrence."""
     if df is None or df.empty:
         return df
     return df.loc[:, ~df.columns.duplicated()].copy()
 
 
+def _pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    """Pick the first column that exists in df."""
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+
+def _as_int_series(s) -> pd.Series:
+    try:
+        return pd.to_numeric(s, errors="coerce").fillna(0).astype(int)
+    except Exception:
+        return pd.Series([0] * len(s))
+
+
+def _as_float_series(s) -> pd.Series:
+    try:
+        return pd.to_numeric(s, errors="coerce").fillna(0.0).astype(float)
+    except Exception:
+        return pd.Series([0.0] * len(s))
+
+
+def _slug(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"[^a-z0-9 ]+", "", s)
+    s = s.strip().replace(" ", "_")
+    return s or "unknown"
+
+
+def _stable_id(prefix: str, name: str) -> str:
+    """
+    Stable ID from name (so reruns don't create new ids).
+    Uses sha1 hash of normalized name to avoid collisions.
+    """
+    base = _slug(name)
+    h = hashlib.sha1(base.encode("utf-8")).hexdigest()[:10]
+    return f"{prefix}_{base}_{h}"
+
+
 # ----------------------------
-# FBref -> Teams
+# TEAMS
 # ----------------------------
 def build_teams_from_fbref(df_team_stats: pd.DataFrame) -> pd.DataFrame:
+    out_cols = ["id", "name", "country"]
     if df_team_stats is None or df_team_stats.empty:
-        return pd.DataFrame(columns=["id", "name", "country"])
+        return pd.DataFrame(columns=out_cols)
 
-    squad_col = _pick_col(df_team_stats, ["squad", "team", "squad_name"])
-    if not squad_col:
-        return pd.DataFrame(columns=["id", "name", "country"])
+    df_team_stats = _dedup_cols(df_team_stats)
+    tcol = _pick_col(df_team_stats, ["squad", "team", "club", "name"])
+    if not tcol:
+        return pd.DataFrame(columns=out_cols)
 
     teams = (
-        df_team_stats[[squad_col]]
+        df_team_stats[[tcol]]
+        .dropna()
+        .astype(str)
         .drop_duplicates()
-        .rename(columns={squad_col: "name"})
-        .reset_index(drop=True)
+        .rename(columns={tcol: "name"})
     )
-    teams["id"] = teams["name"].apply(lambda x: _stable_id("TEAM", _slug(str(x))))
-    teams["country"] = ""
-    return teams[["id", "name", "country"]]
+    teams["id"] = teams["name"].apply(lambda x: _stable_id("team", x))
+    teams["country"] = ""  # FBref'ten ülke her zaman gelmeyebilir; şimdilik boş
+    return teams[["id", "name", "country"]].reset_index(drop=True)
 
 
-# ----------------------------
-# FBref -> Players
-# ----------------------------
-def build_players_from_fbref(df_player_stats: pd.DataFrame) -> pd.DataFrame:
-    if df_player_stats is None or df_player_stats.empty:
-        return pd.DataFrame(columns=["id", "name", "birth_date", "nationality", "position"])
-
-    player_col = _pick_col(df_player_stats, ["player", "player_name", "name"])
-    if not player_col:
-        return pd.DataFrame(columns=["id", "name", "birth_date", "nationality", "position"])
-
-    pos_col = _pick_col(df_player_stats, ["position", "pos"])
-
-    base = df_player_stats[[player_col] + ([pos_col] if pos_col else [])].copy()
-    base = base.drop_duplicates(subset=[player_col]).rename(columns={player_col: "name"})
-
-    base["id"] = base["name"].apply(lambda x: _stable_id("PLAYER", _slug(str(x))))
-    base["birth_date"] = ""
-    base["nationality"] = ""
-    base["position"] = base[pos_col].astype(str) if pos_col else ""
-
-    return base[["id", "name", "birth_date", "nationality", "position"]].reset_index(drop=True)
-
-
-# ----------------------------
-# Understat fallback -> Teams/Players
-# ----------------------------
 def build_teams_from_understat(df_us: pd.DataFrame) -> pd.DataFrame:
+    out_cols = ["id", "name", "country"]
     if df_us is None or df_us.empty:
-        return pd.DataFrame(columns=["id", "name", "country"])
+        return pd.DataFrame(columns=out_cols)
 
     df_us = _dedup_cols(df_us)
-
     if "team" not in df_us.columns:
-        return pd.DataFrame(columns=["id", "name", "country"])
+        tcol = _pick_col(df_us, ["squad", "team_name", "club"])
+        if not tcol:
+            return pd.DataFrame(columns=out_cols)
+        tmp = df_us[[tcol]].rename(columns={tcol: "name"})
+    else:
+        tmp = df_us[["team"]].rename(columns={"team": "name"})
 
-    teams = df_us[["team"]].drop_duplicates().rename(columns={"team": "name"}).reset_index(drop=True)
-    teams["id"] = teams["name"].apply(lambda x: _stable_id("TEAM", _slug(str(x))))
-    teams["country"] = ""
-    return teams[["id", "name", "country"]]
+    tmp = tmp.dropna().astype(str).drop_duplicates()
+    tmp["id"] = tmp["name"].apply(lambda x: _stable_id("team", x))
+    tmp["country"] = ""
+    return tmp[["id", "name", "country"]].reset_index(drop=True)
+
+
+# ----------------------------
+# PLAYERS
+# ----------------------------
+def build_players_from_fbref(df_fb: pd.DataFrame) -> pd.DataFrame:
+    out_cols = ["id", "name", "birth_date", "nationality", "position"]
+    if df_fb is None or df_fb.empty:
+        return pd.DataFrame(columns=out_cols)
+
+    df_fb = _dedup_cols(df_fb)
+    pcol = _pick_col(df_fb, ["player", "player_name", "name"])
+    if not pcol:
+        return pd.DataFrame(columns=out_cols)
+
+    players = df_fb[[pcol]].dropna().astype(str).drop_duplicates().rename(columns={pcol: "name"})
+    players["id"] = players["name"].apply(lambda x: _stable_id("player", x))
+    players["birth_date"] = ""
+    players["nationality"] = ""
+    players["position"] = ""
+    return players[out_cols].reset_index(drop=True)
 
 
 def build_players_from_understat(df_us: pd.DataFrame) -> pd.DataFrame:
+    out_cols = ["id", "name", "birth_date", "nationality", "position"]
     if df_us is None or df_us.empty:
-        return pd.DataFrame(columns=["id", "name", "birth_date", "nationality", "position"])
+        return pd.DataFrame(columns=out_cols)
 
     df_us = _dedup_cols(df_us)
 
-    if "player" not in df_us.columns:
-        return pd.DataFrame(columns=["id", "name", "birth_date", "nationality", "position"])
+    if "player" in df_us.columns:
+        pcol = "player"
+    else:
+        pcol = _pick_col(df_us, ["player_name", "name"])
+        if not pcol:
+            return pd.DataFrame(columns=out_cols)
 
-    cols = ["player"] + (["position"] if "position" in df_us.columns else [])
-    tmp = df_us[cols].drop_duplicates(subset=["player"]).copy()
-
-    tmp = tmp.rename(columns={"player": "name"})
-    tmp["id"] = tmp["name"].apply(lambda x: _stable_id("PLAYER", _slug(str(x))))
-    tmp["birth_date"] = ""
-    tmp["nationality"] = ""
-    if "position" not in tmp.columns:
-        tmp["position"] = ""
-
-    return tmp[["id", "name", "birth_date", "nationality", "position"]].reset_index(drop=True)
+    players = df_us[[pcol]].dropna().astype(str).drop_duplicates().rename(columns={pcol: "name"})
+    players["id"] = players["name"].apply(lambda x: _stable_id("player", x))
+    players["birth_date"] = ""
+    players["nationality"] = ""
+    players["position"] = df_us["position"].astype(str) if "position" in df_us.columns else ""
+    # position tek değer olmayabilir; basitçe boş bırakalım:
+    players["position"] = ""
+    return players[out_cols].reset_index(drop=True)
 
 
 # ----------------------------
-# FBref -> Team Season
+# TEAM_SEASON (FBref yoksa boş)
 # ----------------------------
 def build_team_season_from_fbref(
     df_team_stats: pd.DataFrame,
@@ -148,44 +157,15 @@ def build_team_season_from_fbref(
     seasons_df: pd.DataFrame,
     leagues_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    out_cols = ["team_id", "season_id", "points", "rank"]
-    if df_team_stats is None or df_team_stats.empty or teams_df is None or teams_df.empty:
-        return pd.DataFrame(columns=out_cols)
-
-    squad_col = _pick_col(df_team_stats, ["squad", "team", "squad_name"])
-    pts_col = _pick_col(df_team_stats, ["points", "pts"])
-    rk_col = _pick_col(df_team_stats, ["rank", "rnk", "position"])
-
-    if not squad_col:
-        return pd.DataFrame(columns=out_cols)
-
-    tmap = dict(zip(teams_df["name"], teams_df["id"]))
-
-    df = df_team_stats.copy()
-    df["team_id"] = df[squad_col].map(tmap)
-
-    df["points"] = _as_int_series(df[pts_col]) if pts_col else 0
-    df["rank"] = _as_int_series(df[rk_col]) if rk_col else 0
-
-    season_col = _pick_col(df, ["season", "season_id", "year"])
-    if season_col:
-        def _to_year(x):
-            s = str(x)
-            m = re.match(r"(\d{4})", s)
-            return int(m.group(1)) if m else None
-
-        df["_season_year"] = df[season_col].apply(_to_year)
-    else:
-        df["_season_year"] = None
-
-    df["season_id"] = df["_season_year"].apply(lambda y: str(y) if y else "")
-
-    out = df[["team_id", "season_id", "points", "rank"]].dropna(subset=["team_id"]).copy()
-    return out[out_cols].reset_index(drop=True)
+    """
+    FBref 403 yüzünden genelde boş kalacak.
+    Şimdilik yanlış veri üretmemek için boş döndürüyoruz.
+    """
+    return pd.DataFrame(columns=["team_id", "season_id", "points", "rank"])
 
 
 # ----------------------------
-# Player Season Stats (FBref + Understat)
+# PLAYER_SEASON_STATS (ASIL KRİTİK)
 # ----------------------------
 def build_player_season_stats(
     df_fb: pd.DataFrame,
@@ -193,6 +173,14 @@ def build_player_season_stats(
     players_df: pd.DataFrame,
     teams_df: pd.DataFrame,
 ) -> pd.DataFrame:
+    """
+    KURAL:
+    - Understat tarafında main.py artık canonical season_id üretiyor:
+        <league_id>__YYYY_YYYY
+      Bu yüzden burada 'season' parse ETMİYORUZ.
+      Varsa df_us['season_id'] direkt alınır.
+    - FBref gelirse (ileride) basit fallback vardır.
+    """
     out_cols = ["player_id", "team_id", "season_id", "minutes", "goals", "xg", "assists"]
 
     if (df_fb is None or df_fb.empty) and (df_us is None or df_us.empty):
@@ -206,31 +194,38 @@ def build_player_season_stats(
 
     rows = []
 
-    # --- FBref (if exists)
+    # ----------------------------
+    # FBref (varsa) - basit fallback
+    # ----------------------------
     if df_fb is not None and not df_fb.empty:
+        df_fb = _dedup_cols(df_fb)
+
         pcol = _pick_col(df_fb, ["player", "player_name", "name"])
         tcol = _pick_col(df_fb, ["squad", "team"])
         min_col = _pick_col(df_fb, ["minutes", "min"])
         g_col = _pick_col(df_fb, ["goals", "gls"])
         a_col = _pick_col(df_fb, ["assists", "ast"])
-        season_col = _pick_col(df_fb, ["season", "season_id", "year"])
+
+        # season_id varsa onu kullan, yoksa season/year'dan kaba çıkarım
+        if "season_id" in df_fb.columns:
+            season_col = "season_id"
+        else:
+            season_col = _pick_col(df_fb, ["season", "year"])
 
         tmp = df_fb.copy()
         tmp["_pname"] = tmp[pcol].astype(str) if pcol else ""
         tmp["_tname"] = tmp[tcol].astype(str) if tcol else ""
-
-        def _to_year(x):
-            s = str(x)
-            m = re.match(r"(\d{4})", s)
-            return int(m.group(1)) if m else None
-
-        tmp["_season_year"] = tmp[season_col].apply(_to_year) if season_col else None
         tmp["_player_id"] = tmp["_pname"].map(players_map)
         tmp["_team_id"] = tmp["_tname"].map(teams_map) if teams_map else ""
 
-        mins = _as_int_series(tmp[min_col]) if min_col else 0
-        goals = _as_int_series(tmp[g_col]) if g_col else 0
-        ast = _as_int_series(tmp[a_col]) if a_col else 0
+        if season_col:
+            tmp["_season_id"] = tmp[season_col].astype(str)
+        else:
+            tmp["_season_id"] = ""
+
+        mins = _as_int_series(tmp[min_col]) if min_col else pd.Series([0] * len(tmp))
+        goals = _as_int_series(tmp[g_col]) if g_col else pd.Series([0] * len(tmp))
+        ast = _as_int_series(tmp[a_col]) if a_col else pd.Series([0] * len(tmp))
 
         for i in range(len(tmp)):
             pid = tmp["_player_id"].iloc[i]
@@ -240,51 +235,47 @@ def build_player_season_stats(
                 {
                     "player_id": pid,
                     "team_id": tmp["_team_id"].iloc[i] if isinstance(tmp["_team_id"].iloc[i], str) else (tmp["_team_id"].iloc[i] or ""),
-                    "season_id": str(tmp["_season_year"].iloc[i]) if tmp["_season_year"].iloc[i] else "",
-                    "minutes": int(mins.iloc[i]) if hasattr(mins, "iloc") else int(mins),
-                    "goals": int(goals.iloc[i]) if hasattr(goals, "iloc") else int(goals),
-                    "assists": int(ast.iloc[i]) if hasattr(ast, "iloc") else int(ast),
+                    "season_id": tmp["_season_id"].iloc[i] or "",
+                    "minutes": int(mins.iloc[i]),
+                    "goals": int(goals.iloc[i]),
+                    "assists": int(ast.iloc[i]),
                     "xg": 0.0,
                 }
             )
 
-    # --- Understat (xg + team + season)
+    # ----------------------------
+    # Understat (xg + team + canonical season_id)
+    # ----------------------------
     if df_us is not None and not df_us.empty:
         df_us = _dedup_cols(df_us)
 
         pcol = "player" if "player" in df_us.columns else _pick_col(df_us, ["player_name", "name"])
-        tcol = "team" if "team" in df_us.columns else _pick_col(df_us, ["squad", "team"])
+        tcol = "team" if "team" in df_us.columns else _pick_col(df_us, ["squad", "team_name", "club"])
         xg_col = "xg" if "xg" in df_us.columns else _pick_col(df_us, ["xg_per90", "expected_goals"])
         min_col = "minutes" if "minutes" in df_us.columns else _pick_col(df_us, ["min"])
         g_col = "goals" if "goals" in df_us.columns else _pick_col(df_us, ["gls"])
         a_col = "assists" if "assists" in df_us.columns else _pick_col(df_us, ["ast"])
 
-        # IMPORTANT: force season column preference
-        if "season" in df_us.columns:
-            season_col = "season"
+        # >>> KRİTİK: canonical season_id varsa DIRECT kullan <<<
+        if "season_id" in df_us.columns:
+            season_col = "season_id"
         else:
-            season_col = _pick_col(df_us, ["season_id", "year"])
+            # fallback (eski davranış): ham season
+            season_col = "season" if "season" in df_us.columns else _pick_col(df_us, ["year"])
 
-        tmp = df_us.copy()
-        tmp = _dedup_cols(tmp)
-
+        tmp = _dedup_cols(df_us.copy())
         tmp["_pname"] = tmp[pcol].astype(str) if pcol else ""
         tmp["_tname"] = tmp[tcol].astype(str) if tcol else ""
-
-        def _to_year(x):
-            s = str(x)
-            m = re.match(r"(\d{4})", s)
-            return int(m.group(1)) if m else None
-
-        tmp["_season_year"] = tmp[season_col].apply(_to_year) if season_col else None
 
         tmp["_player_id"] = tmp["_pname"].map(players_map)
         tmp["_team_id"] = tmp["_tname"].map(teams_map) if teams_map else ""
 
-        xg = _as_float_series(tmp[xg_col]) if xg_col else 0.0
-        mins = _as_int_series(tmp[min_col]) if min_col else 0
-        goals = _as_int_series(tmp[g_col]) if g_col else 0
-        ast = _as_int_series(tmp[a_col]) if a_col else 0
+        tmp["_season_id"] = tmp[season_col].astype(str) if season_col else ""
+
+        xg = _as_float_series(tmp[xg_col]) if xg_col else pd.Series([0.0] * len(tmp))
+        mins = _as_int_series(tmp[min_col]) if min_col else pd.Series([0] * len(tmp))
+        goals = _as_int_series(tmp[g_col]) if g_col else pd.Series([0] * len(tmp))
+        ast = _as_int_series(tmp[a_col]) if a_col else pd.Series([0] * len(tmp))
 
         for i in range(len(tmp)):
             pid = tmp["_player_id"].iloc[i]
@@ -294,11 +285,11 @@ def build_player_season_stats(
                 {
                     "player_id": pid,
                     "team_id": tmp["_team_id"].iloc[i] if isinstance(tmp["_team_id"].iloc[i], str) else (tmp["_team_id"].iloc[i] or ""),
-                    "season_id": str(tmp["_season_year"].iloc[i]) if tmp["_season_year"].iloc[i] else "",
-                    "minutes": int(mins.iloc[i]) if hasattr(mins, "iloc") else int(mins),
-                    "goals": int(goals.iloc[i]) if hasattr(goals, "iloc") else int(goals),
-                    "assists": int(ast.iloc[i]) if hasattr(ast, "iloc") else int(ast),
-                    "xg": float(xg.iloc[i]) if hasattr(xg, "iloc") else float(xg),
+                    "season_id": tmp["_season_id"].iloc[i] or "",
+                    "minutes": int(mins.iloc[i]),
+                    "goals": int(goals.iloc[i]),
+                    "assists": int(ast.iloc[i]),
+                    "xg": float(xg.iloc[i]),
                 }
             )
 
@@ -307,6 +298,7 @@ def build_player_season_stats(
 
     out = pd.DataFrame(rows)
 
+    # groupby ile birleştir
     out = (
         out.groupby(["player_id", "team_id", "season_id"], as_index=False)
         .agg(

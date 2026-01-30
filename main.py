@@ -178,26 +178,9 @@ def build_leagues_table(cfg_leagues: List[LeagueConfig]) -> pd.DataFrame:
                 "id": make_league_id(l.country_code, l.league_name, l.level),
                 "name": l.league_name,
                 "country": l.country_code,
-                "level": l.level,
+                "level": int(l.level),
             }
         )
-    return pd.DataFrame(rows)
-
-
-def build_seasons_table(leagues_df: pd.DataFrame, season_years: List[int]) -> pd.DataFrame:
-    rows = []
-    for _, row in leagues_df.iterrows():
-        league_id = row["id"]
-        for y in season_years:
-            y = int(y)
-            rows.append(
-                {
-                    "id": make_season_id(league_id, y),
-                    "league_id": league_id,
-                    "season_start_year": y,
-                    "season_label": make_season_label(y),
-                }
-            )
     return pd.DataFrame(rows)
 
 
@@ -205,6 +188,8 @@ def build_source_entity_map_for_leagues(cfg_leagues: List[LeagueConfig], fetched
     rows = []
     for l in cfg_leagues:
         canonical_league_id = make_league_id(l.country_code, l.league_name, l.level)
+
+        # ids içinden hem fbref hem understat varsa map’e yaz
         for source in ["fbref", "understat"]:
             source_id = (l.ids or {}).get(source)
             if source_id:
@@ -222,6 +207,28 @@ def build_source_entity_map_for_leagues(cfg_leagues: List[LeagueConfig], fetched
                     }
                 )
     return pd.DataFrame(rows)
+def build_seasons_table(leagues_df: pd.DataFrame, season_years: List[int]) -> pd.DataFrame:
+    rows = []
+    for _, row in leagues_df.iterrows():
+        league_id = row["id"]
+        for y in season_years:
+            y = int(y)
+            rows.append(
+                {
+                    "id": make_season_id(league_id, y),
+                    "league_id": league_id,
+                    "season_start_year": y,
+                    "season_label": make_season_label(y),
+                }
+            )
+
+    df = pd.DataFrame(rows)
+
+    # lig bazlı + sezon sıralı
+    return df.sort_values(
+        ["league_id", "season_start_year"]
+    ).reset_index(drop=True)
+    
 
 
 # ----------------------------
@@ -308,6 +315,9 @@ def main():
         df_player_stats_us["canonical_league_id"] = df_player_stats_us["league"].astype(str).map(understat_to_canonical)
 
         # season -> season_start_year
+        # --- FIX: Understat DF can have duplicate index labels
+        df_player_stats_us = df_player_stats_us.copy()
+        df_player_stats_us = df_player_stats_us.loc[:, ~df_player_stats_us.columns.duplicated()].reset_index(drop=True)
         df_player_stats_us["season_start_year"] = df_player_stats_us["season"].apply(parse_understat_season_start_year)
 
         # season_id + label

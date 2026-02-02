@@ -5,6 +5,9 @@ Bu klasör, projenin ilk çalışan sürümüdür.
 
 
 deeeeeeeee
+
+
+,
 Understat üzerinden 5 büyük lig + çoklu sezon oyuncu sezon istatistiklerini çekmek için kullanılmıştır.
 
 Dosya:

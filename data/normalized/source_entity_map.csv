@@ -1,11 +1,11 @@
 ﻿entity_type,source,source_id,canonical_id,source_name,season_id,confidence,match_method,fetched_at
-league,fbref,ENG-Premier League,ENG_1_premier_league,Premier League,,1.0,config,2026-01-30T13:36:06.974532+00:00
-league,understat,ENG-Premier League,ENG_1_premier_league,Premier League,,1.0,config,2026-01-30T13:36:06.974532+00:00
-league,fbref,ESP-La Liga,ESP_1_la_liga,La Liga,,1.0,config,2026-01-30T13:36:06.974532+00:00
-league,understat,ESP-La Liga,ESP_1_la_liga,La Liga,,1.0,config,2026-01-30T13:36:06.974532+00:00
-league,fbref,GER-Bundesliga,GER_1_bundesliga,Bundesliga,,1.0,config,2026-01-30T13:36:06.974532+00:00
-league,understat,GER-Bundesliga,GER_1_bundesliga,Bundesliga,,1.0,config,2026-01-30T13:36:06.974532+00:00
-league,fbref,ITA-Serie A,ITA_1_serie_a,Serie A,,1.0,config,2026-01-30T13:36:06.974532+00:00
-league,understat,ITA-Serie A,ITA_1_serie_a,Serie A,,1.0,config,2026-01-30T13:36:06.974532+00:00
-league,fbref,FRA-Ligue 1,FRA_1_ligue_1,Ligue 1,,1.0,config,2026-01-30T13:36:06.974532+00:00
-league,understat,FRA-Ligue 1,FRA_1_ligue_1,Ligue 1,,1.0,config,2026-01-30T13:36:06.974532+00:00
+league,fbref,ENG-Premier League,ENG_1_premier_league,Premier League,,1.0,config,2026-02-02T08:08:19.514534+00:00
+league,understat,ENG-Premier League,ENG_1_premier_league,Premier League,,1.0,config,2026-02-02T08:08:19.514534+00:00
+league,fbref,ESP-La Liga,ESP_1_la_liga,La Liga,,1.0,config,2026-02-02T08:08:19.514534+00:00
+league,understat,ESP-La Liga,ESP_1_la_liga,La Liga,,1.0,config,2026-02-02T08:08:19.514534+00:00
+league,fbref,GER-Bundesliga,GER_1_bundesliga,Bundesliga,,1.0,config,2026-02-02T08:08:19.514534+00:00
+league,understat,GER-Bundesliga,GER_1_bundesliga,Bundesliga,,1.0,config,2026-02-02T08:08:19.514534+00:00
+league,fbref,ITA-Serie A,ITA_1_serie_a,Serie A,,1.0,config,2026-02-02T08:08:19.514534+00:00
+league,understat,ITA-Serie A,ITA_1_serie_a,Serie A,,1.0,config,2026-02-02T08:08:19.514534+00:00
+league,fbref,FRA-Ligue 1,FRA_1_ligue_1,Ligue 1,,1.0,config,2026-02-02T08:08:19.514534+00:00
+league,understat,FRA-Ligue 1,FRA_1_ligue_1,Ligue 1,,1.0,config,2026-02-02T08:08:19.514534+00:00

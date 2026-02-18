@@ -1,0 +1,7 @@
+statsbomb:
+  enabled: true
+  base_url: "https://raw.githubusercontent.com/statsbomb/open-data/master/data"
+  # MVP: önce küçük başla (competition+season seçerek)
+  selections:
+    - competition_id: 2
+      season_id: 44
